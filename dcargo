@@ -1,0 +1,66 @@
+#!/usr/bin/env ruby
+require "etc"
+
+require "optparse"
+
+uid, gid = Etc.getpwnam(Etc.getlogin).to_h.values_at(:uid, :gid)
+
+WORKDIR =  "/usr/src/myapp"
+
+opts = {
+  :cmd => nil,
+  :mount => [],
+  :dep => [],
+  :group => [],
+  :image => "rust:latest",
+  :option => [],
+}
+OptionParser.new do |o|
+  o.on("--expand", "Generates the expansion of compiler plugins and macros") do
+    # docker run --rm -it --user 1000:1000 -e CARGO_HOME=/usr/src/myapp/.cargo -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:latest /bin/bash -c "rustup component add rustfmt-preview && rustup install nightly && rustup run nightly cargo rustc -- -Z unstable-options --pretty=expanded > expanded.rs && rustfmt --config-path ./rustfmt.toml --write-mode=overwrite expanded.rs"
+    raise "not yet implemented"
+  end
+
+  o.on("-c", "--cmd cmd", "Run a command instead of a cargo subcommand") do |cmd|
+    raise "-c/--cmd can only be used once" if opts[:cmd]
+    opts[:cmd] = cmd.split(/\s+/)
+  end
+
+  o.on("-d", "--dep dep", "Add a local dependency") do |dep|
+    name, path = dep.split(":")
+    raise "Must specify '--dep <name>:<path>', found '--dep #{dep}'" if name.nil? || path.nil? || path.is_a?(Array)
+    opts[:dep] << [name, path]
+  end
+
+  o.on("-v", "--mount mount", "Add a custom mount") do |mount|
+    opts[:mount] << ["-v", mount]
+  end
+
+  o.on('-g', "--group-add group", "Add a group to the user") do |group|
+    opts[:group] << ["--group-add", group]
+  end
+
+  o.on('-i', '--image image', 'Docker image to run') do |image|
+    opts[:image] = image
+  end
+
+  o.on('-o', '--docker-option option', 'Add an arbitrary docker option') do |option|
+    opts[:option] << option
+  end
+end.parse!
+
+opts[:cmd] ||= ["cargo", *ARGV]
+
+exec(
+  "docker", "run", "--rm", "-it", "--init",
+  "--user", "#{uid}:#{gid}",
+  *opts[:group].flatten,
+  "-e", "USER",
+  "-e", "CARGO_HOME=#{File.join(WORKDIR, '.cargo')}",
+  "-v", "#{ENV['PWD']}:#{WORKDIR}",
+  *opts[:mount].flatten,
+  *opts[:dep].map { |name, path| ["-v", "#{path}:#{File.join(WORKDIR, name)}"] }.flatten,
+  "-w", WORKDIR,
+  *opts[:option],
+  opts[:image], *opts[:cmd],
+)
